@@ -20,14 +20,12 @@ jobs:
           if [ -n "${{ github.event.client_payload.judge_id }}" ]; then
             echo "JUDGE_ID=${{ github.event.client_payload.judge_id }}" >> $GITHUB_ENV
             echo "PROBLEM_ID=${{ github.event.client_payload.problem_id }}" >> $GITHUB_ENV
-            echo "触发方式: API"
           else
             COMMIT_MSG=$(git log -1 --pretty=%B)
             JUDGE_ID=$(echo "$COMMIT_MSG" | grep -oP '#\K\d+' | head -1)
             PROBLEM_ID=$(echo "$COMMIT_MSG" | grep -oP '题目 \K\d+' | head -1)
             echo "JUDGE_ID=$JUDGE_ID" >> $GITHUB_ENV
             echo "PROBLEM_ID=$PROBLEM_ID" >> $GITHUB_ENV
-            echo "触发方式: Push"
           fi
 
       - name: 显示参数
@@ -39,8 +37,6 @@ jobs:
         run: |
           if [ ! -f "submit/${{ env.JUDGE_ID }}.cpp" ]; then
             echo "代码文件 submit/${{ env.JUDGE_ID }}.cpp 不存在"
-            echo "submit 目录内容:"
-            ls -la submit/
             exit 1
           fi
           cp "submit/${{ env.JUDGE_ID }}.cpp" main.cpp
@@ -49,6 +45,7 @@ jobs:
           else
             echo "编译失败"
             cat compile_error.txt
+            echo "CE" > result_status.txt
             exit 1
           fi
 
@@ -75,7 +72,7 @@ jobs:
             elif [ -f "$ans_file" ]; then
               answer_file="$ans_file"
             else
-              echo "测试点 $base: SKIP (无答案文件)"
+              echo "测试点 $base: SKIP"
               continue
             fi
 
@@ -97,7 +94,6 @@ jobs:
           done
 
           echo ""
-          echo "====== 评测结果 ======"
           echo "通过: $passed / $total"
 
           if [ $passed -eq $total ] && [ $total -gt 0 ]; then
@@ -107,19 +103,19 @@ jobs:
           else
             RESULT="WA"
           fi
-          
-          # 写入文件供下一步使用
-          echo "RESULT=$RESULT" > result.txt
-          echo "PASSED=$passed" >> result.txt
-          echo "TOTAL=$total" >> result.txt
 
-      - name: 回传结果
+          mkdir -p results
+          echo "{\"judge_id\": ${{ env.JUDGE_ID }}, \"result\": \"$RESULT\", \"passed\": $passed, \"total\": $total}" > results/${{ env.JUDGE_ID }}.json
+
+      - name: 提交结果
         if: always()
-        env:
-          JUDGE_ID: ${{ env.JUDGE_ID }}
         run: |
-          source result.txt 2>/dev/null || { RESULT="Error"; PASSED=0; TOTAL=0; }
-          
-          curl -X POST "https://lmtoj.xo.je/update_result.php" \
-            -H "Content-Type: application/json" \
-            -d "{\"judge_id\": ${JUDGE_ID}, \"result\": \"${RESULT}\", \"passed\": ${PASSED}, \"total\": ${TOTAL}, \"token\": \"lmtisafvv,ioiaklmt.\"}"
+          if [ -f result_status.txt ] && [ "$(cat result_status.txt)" = "CE" ]; then
+            mkdir -p results
+            echo "{\"judge_id\": ${{ env.JUDGE_ID }}, \"result\": \"CE\", \"passed\": 0, \"total\": 0}" > results/${{ env.JUDGE_ID }}.json
+          fi
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          git add results/
+          git commit -m "评测结果 #${{ env.JUDGE_ID }}" || true
+          git push || true
