@@ -14,7 +14,7 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 获取评测ID
+      - name: 获取评测ID和题目ID
         id: get_id
         run: |
           if [ -n "${{ github.event.client_payload.judge_id }}" ]; then
@@ -22,13 +22,14 @@ jobs:
             echo "PROBLEM_ID=${{ github.event.client_payload.problem_id }}" >> $GITHUB_ENV
             echo "触发方式: API"
           else
-            # push 触发，从最新提交的文件中提取评测ID
-            JUDGE_ID=$(git log -1 --name-only --pretty=format:'' --diff-filter=A submit/ | grep -oP 'submit/\K\d+(?=\.cpp)' | head -1)
+            COMMIT_MSG=$(git log -1 --pretty=%B)
+            JUDGE_ID=$(echo "$COMMIT_MSG" | grep -oP '#\K\d+' | head -1)
+            PROBLEM_ID=$(echo "$COMMIT_MSG" | grep -oP '题目 \K\d+' | head -1)
             echo "JUDGE_ID=$JUDGE_ID" >> $GITHUB_ENV
-            echo "PROBLEM_ID=1" >> $GITHUB_ENV
+            echo "PROBLEM_ID=$PROBLEM_ID" >> $GITHUB_ENV
             echo "触发方式: Push"
           fi
-          
+
       - name: 显示参数
         run: |
           echo "评测ID: ${{ env.JUDGE_ID }}"
@@ -38,7 +39,7 @@ jobs:
         run: |
           if [ ! -f "submit/${{ env.JUDGE_ID }}.cpp" ]; then
             echo "代码文件 submit/${{ env.JUDGE_ID }}.cpp 不存在"
-            echo "目录内容:"
+            echo "submit 目录内容:"
             ls -la submit/
             exit 1
           fi
@@ -55,20 +56,22 @@ jobs:
         run: |
           data_dir="${{ env.PROBLEM_ID }}"
           if [ ! -d "$data_dir" ]; then
-            echo "错误：题目 ${{ env.PROBLEM_ID }} 的测试数据不存在"
+            echo "错误：题目 ${{ env.PROBLEM_ID }} 的测试数据目录不存在"
+            echo "当前目录内容:"
+            ls -la
             exit 1
           fi
-          
+
           passed=0
           total=0
-          
+
           for input in "$data_dir"/*.in; do
             if [ ! -f "$input" ]; then continue; fi
             total=$((total + 1))
             base=$(basename "$input" .in)
             output_file="$data_dir/$base.out"
             ans_file="$data_dir/$base.ans"
-            
+
             if [ -f "$output_file" ]; then
               answer_file="$output_file"
             elif [ -f "$ans_file" ]; then
@@ -77,33 +80,37 @@ jobs:
               echo "测试点 $base: SKIP (无答案文件)"
               continue
             fi
-            
+
             timeout 5 ./program < "$input" > output.txt 2>&1
             exit_code=$?
-            
+
             if [ $exit_code -eq 124 ]; then
               echo "测试点 $base: TLE"
             elif [ $exit_code -ne 0 ]; then
               echo "测试点 $base: RE"
+              cat output.txt
             else
               if diff -q output.txt "$answer_file" > /dev/null 2>&1; then
                 echo "测试点 $base: AC"
                 passed=$((passed + 1))
               else
                 echo "测试点 $base: WA"
-                echo "期望:"
+                echo "期望输出:"
                 cat "$answer_file"
-                echo "实际:"
+                echo "你的输出:"
                 cat output.txt
               fi
             fi
           done
-          
+
           echo ""
-          echo "====== 结果 ======"
+          echo "====== 评测结果 ======"
           echo "通过: $passed / $total"
+
           if [ $passed -eq $total ] && [ $total -gt 0 ]; then
-            echo "AC"
+            echo "结果: AC"
+            exit 0
           else
-            echo "WA/RE/TLE"
+            echo "结果: WA/RE/TLE"
+            exit 1
           fi
