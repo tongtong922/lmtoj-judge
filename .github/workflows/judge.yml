@@ -57,8 +57,6 @@ jobs:
           data_dir="${{ env.PROBLEM_ID }}"
           if [ ! -d "$data_dir" ]; then
             echo "错误：题目 ${{ env.PROBLEM_ID }} 的测试数据目录不存在"
-            echo "当前目录内容:"
-            ls -la
             exit 1
           fi
 
@@ -88,17 +86,12 @@ jobs:
               echo "测试点 $base: TLE"
             elif [ $exit_code -ne 0 ]; then
               echo "测试点 $base: RE"
-              cat output.txt
             else
               if diff -q output.txt "$answer_file" > /dev/null 2>&1; then
                 echo "测试点 $base: AC"
                 passed=$((passed + 1))
               else
                 echo "测试点 $base: WA"
-                echo "期望输出:"
-                cat "$answer_file"
-                echo "你的输出:"
-                cat output.txt
               fi
             fi
           done
@@ -108,16 +101,6 @@ jobs:
           echo "通过: $passed / $total"
 
           if [ $passed -eq $total ] && [ $total -gt 0 ]; then
-            echo "结果: AC"
-            exit 0
-          else
-            echo "结果: WA/RE/TLE"
-            exit 1
-          fi
-      - name: 回传结果
-        if: always()
-        run: |
-          if [ $passed -eq $total ] && [ $total -gt 0 ]; then
             RESULT="AC"
           elif [ $total -eq 0 ]; then
             RESULT="NoData"
@@ -125,6 +108,18 @@ jobs:
             RESULT="WA"
           fi
           
+          # 写入文件供下一步使用
+          echo "RESULT=$RESULT" > result.txt
+          echo "PASSED=$passed" >> result.txt
+          echo "TOTAL=$total" >> result.txt
+
+      - name: 回传结果
+        if: always()
+        env:
+          JUDGE_ID: ${{ env.JUDGE_ID }}
+        run: |
+          source result.txt 2>/dev/null || { RESULT="Error"; PASSED=0; TOTAL=0; }
+          
           curl -X POST "https://lmtoj.xo.je/update_result.php" \
             -H "Content-Type: application/json" \
-            -d "{\"judge_id\": JUDGE_ID, \"result\": \"$RESULT\", \"passed\": $passed, \"total\": $total, \"token\": \"lmtisafvv,ioiaklmt.\"}"
+            -d "{\"judge_id\": ${JUDGE_ID}, \"result\": \"${RESULT}\", \"passed\": ${PASSED}, \"total\": ${TOTAL}, \"token\": \"lmtisafvv,ioiaklmt.\"}"
